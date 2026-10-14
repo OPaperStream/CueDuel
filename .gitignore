@@ -2,3 +2,4 @@
 build/
 *.jks
 *.keystore
+android/

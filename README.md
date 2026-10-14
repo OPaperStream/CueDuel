@@ -46,4 +46,4 @@ and the physics is deterministic.
 
 ## License
 
-GPL-3.0, see [LICENSE](LICENSE).
+GPL-3.0, see [LICENSE](LICENSE). Privacy policy: [PRIVACY.md](PRIVACY.md).

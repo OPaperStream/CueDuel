@@ -73,6 +73,21 @@ func _dev_args() -> void:
 			for n in [9, 3, 6]:
 				sim.alive[sim.index_of(n)] = 0
 			ui.open("balls")
+		elif a.begins_with("--lang="):
+			L.set_lang(a.get_slice("=", 1))
+		elif a.begins_with("--cam="):
+			var v := a.get_slice("=", 1).split_floats(",")
+			view.fixed_cam = [Vector3(v[0], v[1], v[2]), Vector3(v[3], v[4], v[5])]
+		elif a == "--top":
+			follow_cam = false
+		elif a == "--settings":
+			ui.open("settings")
+		elif a == "--result":
+			ui.close_all()
+			start_game(false)
+			ui.show_result(L.t("VICTORY!"), true, L.t("You potted the 8 cleanly"), [
+				["6:42", "Duration"], ["14 : 11", "Shots (you : AI)"], ["8 : 5", "Potted"],
+				["1 : 2", "Fouls"], ["4", "Best run"], ["57 %", "Pots per shot"]])
 		elif a == "--menu-stats":
 			ui.open("stats")
 		elif a == "--aiwatch":

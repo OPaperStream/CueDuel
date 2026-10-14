@@ -18,6 +18,7 @@ var head_line: MeshInstance3D
 var _last := []
 var _fall := {}
 var _look := Vector3.ZERO
+var fixed_cam = null
 var lamp: Node3D
 
 
@@ -86,6 +87,31 @@ func _box(size: Vector3, pos: Vector3, mat: Material, parent: Node = self, shado
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
 	return mi
+
+
+func _csg_box(size: Vector3, pos: Vector3) -> CSGBox3D:
+	var b := CSGBox3D.new()
+	b.size = size
+	b.position = pos
+	return b
+
+
+## CSG combiner with one subtracting cylinder per pocket (moved last after filling).
+func _csg_cut(mat: Material, radius: float) -> CSGCombiner3D:
+	var c := CSGCombiner3D.new()
+	c.material_override = mat
+	var cutters := []
+	for p in Sim.POCKETS:
+		var cyl := CSGCylinder3D.new()
+		cyl.radius = radius
+		cyl.height = 1.0
+		cyl.sides = 40
+		cyl.operation = CSGShape3D.OPERATION_SUBTRACTION
+		cyl.position = w(p.x, p.y, 0)
+		c.add_child(cyl)
+		cutters.append(cyl)
+	c.set_meta("cutters", cutters)
+	return c
 
 
 func _environment() -> void:
@@ -164,56 +190,59 @@ func _table() -> void:
 	var cushion := _mat(CLOTH, 0.9)
 	var tw := (Sim.PR - Sim.PL) * S
 	var td := (Sim.PB - Sim.PT) * S
-	# bed and body
-	_box(Vector3(tw + 0.5, 0.06, td + 0.5), Vector3(0, -0.03, 0), felt)
-	_box(Vector3(tw + 1.2, 0.36, td + 1.2), Vector3(0, -0.24, 0), wood)
-	for sx in [-1, 1]:
-		for sz in [-1, 1]:
-			_box(Vector3(0.42, 2.9, 0.42), Vector3(sx * (tw / 2 + 0.2), -1.75, sz * (td / 2 + 0.2)), wood)
-	# wooden rails
 	var rw := 0.42
 	var rh := 0.2
-	_box(Vector3(rw, rh, td + 2 * 0.1 + 2 * rw), Vector3(-(tw / 2 + 0.1 + rw / 2), rh / 2, 0), wood)
-	_box(Vector3(rw, rh, td + 2 * 0.1 + 2 * rw), Vector3(tw / 2 + 0.1 + rw / 2, rh / 2, 0), wood)
-	_box(Vector3(tw + 0.2, rh, rw), Vector3(0, rh / 2, -(td / 2 + 0.1 + rw / 2)), wood)
-	_box(Vector3(tw + 0.2, rh, rw), Vector3(0, rh / 2, td / 2 + 0.1 + rw / 2), wood)
-	# cushions follow the simulation's segments
-	for s in Sim.SEGS:
-		var a: Vector2 = s[0]
-		var b: Vector2 = s[1]
-		var d := b - a
+	var pr := 0.25
+	# Felt bed, rails and cushions are CSG shapes with the pockets cut out, so the
+	# pockets are real holes instead of objects standing on the table.
+	var bed := _csg_cut(felt, pr)
+	bed.add_child(_csg_box(Vector3(tw + 0.5, 0.06, td + 0.5), Vector3(0, -0.03, 0)))
+	var frame := _csg_cut(wood, pr)
+	var outer := _csg_box(Vector3(tw + 0.2 + 2 * rw, rh, td + 0.2 + 2 * rw), Vector3(0, rh / 2, 0))
+	frame.add_child(outer)
+	var inner := _csg_box(Vector3(tw + 0.2, rh + 0.2, td + 0.2), Vector3(0, rh / 2, 0))
+	inner.operation = CSGShape3D.OPERATION_SUBTRACTION
+	frame.add_child(inner)
+	var cush := _csg_cut(cushion, pr)
+	for sg in Sim.SEGS:
+		var a2: Vector2 = sg[0]
+		var b2: Vector2 = sg[1]
+		var d := b2 - a2
 		var out := Vector2(-d.y, d.x).normalized()
-		var mid := (a + b) / 2
+		var mid := (a2 + b2) / 2
 		if Vector2(Sim.CX, Sim.CY).distance_to(mid + out) < Vector2(Sim.CX, Sim.CY).distance_to(mid):
 			out = -out
 		var c := mid + out * 5.0
-		var mi := _box(Vector3(d.length() * S, 0.15, 0.1), w(c.x, c.y, 0.075), cushion)
-		mi.rotation.y = -d.angle()
-	# filler between cushions and rails
-	for side in [-1, 1]:
-		_box(Vector3(0.1, 0.15, td - 0.4), Vector3(side * (tw / 2 + 0.05 + 0.05), 0.075, 0), cushion)
-	# pockets
-	var hole := _mat(Color("050505"), 1.0)
-	var brass := _mat(Color("b8923a"), 0.35, 0.8)
+		var cb := _csg_box(Vector3(d.length() * S + 0.02, 0.15, 0.1), w(c.x, c.y, 0.075))
+		cb.rotation.y = -d.angle()
+		cush.add_child(cb)
+	for node in [frame, bed, cush]:
+		var cutters: Array = node.get_meta("cutters")
+		for cyl in cutters:
+			node.move_child(cyl, -1)
+		add_child(node)
+	_box(Vector3(tw + 1.2, 0.36, td + 1.2), Vector3(0, -0.3, 0), wood)
+	for sx in [-1, 1]:
+		for sz in [-1, 1]:
+			_box(Vector3(0.42, 2.9, 0.42), Vector3(sx * (tw / 2 + 0.2), -1.75, sz * (td / 2 + 0.2)), wood)
+	# pocket shafts: inside-out black cylinders seen through the holes
+	var hole := StandardMaterial3D.new()
+	hole.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	hole.albedo_color = Color("040404")
 	for p in Sim.POCKETS:
-		var pos := w(p.x, p.y)
 		var cyl := MeshInstance3D.new()
 		var cm := CylinderMesh.new()
-		cm.top_radius = 0.24
-		cm.bottom_radius = 0.2
-		cm.height = 0.5
+		cm.top_radius = pr - 0.002
+		cm.bottom_radius = pr - 0.002
+		cm.height = rh + 0.11
+		cm.radial_segments = 40
+		cm.cap_top = false
+		cm.flip_faces = true
 		cyl.mesh = cm
 		cyl.material_override = hole
-		cyl.position = pos + Vector3(0, -0.04, 0)
+		cyl.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		cyl.position = w(p.x, p.y, (rh - 0.11) / 2)
 		add_child(cyl)
-		var ring := MeshInstance3D.new()
-		var tm := TorusMesh.new()
-		tm.inner_radius = 0.235
-		tm.outer_radius = 0.285
-		ring.mesh = tm
-		ring.material_override = brass
-		ring.position = pos + Vector3(0, 0.215, 0)
-		add_child(ring)
 	# diamonds
 	var pearl := _mat(Color("f3e9c9"), 0.3, 0.4)
 	for k in range(1, 8):
@@ -495,6 +524,10 @@ func show_guides(sim: Sim, angle: float) -> void:
 
 
 func update_camera(follow: bool, cue: Vector2, angle: float, delta: float) -> void:
+	if fixed_cam != null:
+		cam.position = fixed_cam[0]
+		cam.look_at(fixed_cam[1])
+		return
 	var vp := get_viewport().get_visible_rect().size
 	var aspect := vp.x / maxf(vp.y, 1.0)
 	var p: Vector3
